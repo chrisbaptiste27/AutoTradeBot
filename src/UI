@@ -1,175 +1,35 @@
-// Global variables for UI and trading parameters
-int mainPanel, logPanel;
-double totalProfit = 0.0;
-int totalTrades = 0;
-int successfulTrades = 0;
+//+------------------------------------------------------------------+
+//| Initialize UI elements                                           |
+//+------------------------------------------------------------------+
+void InitializeUI()
+{
+   // Create Start/Stop Button
+   ObjectCreate("StartStopButton", OBJ_BUTTON, 0, 0, 0);
+   ObjectSet("StartStopButton", OBJPROP_CORNER, 0);
+   ObjectSet("StartStopButton", OBJPROP_XDISTANCE, 10);
+   ObjectSet("StartStopButton", OBJPROP_YDISTANCE, 10);
+   ObjectSetText("StartStopButton", "Start Bot", 10, "Arial", clrBlack);
 
-// Input parameters (default values)
-input int FastMAPeriod = 13;
-input int SlowMAPeriod = 50;
-input double RiskPercent = 1.0;
-input double Lots = 0.1;
-
-//--- Initialization function for UI
-void InitializeUI() {
-    // Create Main Panel
-    mainPanel = ObjectCreate(0, "MainPanel", OBJ_RECTANGLE_LABEL, 0, 0, 0);
-    ObjectSetInteger(0, "MainPanel", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "MainPanel", OBJPROP_XDISTANCE, 10);
-    ObjectSetInteger(0, "MainPanel", OBJPROP_YDISTANCE, 10);
-    ObjectSetInteger(0, "MainPanel", OBJPROP_COLOR, clrGray);
-    ObjectSetInteger(0, "MainPanel", OBJPROP_WIDTH, 350);
-    ObjectSetInteger(0, "MainPanel", OBJPROP_HEIGHT, 250);
-
-    // Status Label
-    ObjectCreate(0, "StatusLabel", OBJ_LABEL, 0, 0, 0);
-    ObjectSetInteger(0, "StatusLabel", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "StatusLabel", OBJPROP_XDISTANCE, 20);
-    ObjectSetInteger(0, "StatusLabel", OBJPROP_YDISTANCE, 20);
-    ObjectSetString(0, "StatusLabel", OBJPROP_TEXT, "Bot Status: Stopped");
-    ObjectSetInteger(0, "StatusLabel", OBJPROP_COLOR, clrWhite);
-
-    // Fast EMA Input
-    ObjectCreate(0, "FastEMAInput", OBJ_EDIT, 0, 0, 0);
-    ObjectSetInteger(0, "FastEMAInput", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "FastEMAInput", OBJPROP_XDISTANCE, 20);
-    ObjectSetInteger(0, "FastEMAInput", OBJPROP_YDISTANCE, 50);
-    ObjectSetString(0, "FastEMAInput", OBJPROP_TEXT, IntegerToString(FastMAPeriod));
-
-    ObjectCreate(0, "FastEMALabel", OBJ_LABEL, 0, 0, 0);
-    ObjectSetInteger(0, "FastEMALabel", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "FastEMALabel", OBJPROP_XDISTANCE, 140);
-    ObjectSetInteger(0, "FastEMALabel", OBJPROP_YDISTANCE, 50);
-    ObjectSetString(0, "FastEMALabel", OBJPROP_TEXT, "Fast EMA Period");
-    ObjectSetInteger(0, "FastEMALabel", OBJPROP_COLOR, clrWhite);
-
-    // Slow EMA Input
-    ObjectCreate(0, "SlowEMAInput", OBJ_EDIT, 0, 0, 0);
-    ObjectSetInteger(0, "SlowEMAInput", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "SlowEMAInput", OBJPROP_XDISTANCE, 20);
-    ObjectSetInteger(0, "SlowEMAInput", OBJPROP_YDISTANCE, 80);
-    ObjectSetString(0, "SlowEMAInput", OBJPROP_TEXT, IntegerToString(SlowMAPeriod));
-
-    ObjectCreate(0, "SlowEMALabel", OBJ_LABEL, 0, 0, 0);
-    ObjectSetInteger(0, "SlowEMALabel", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "SlowEMALabel", OBJPROP_XDISTANCE, 140);
-    ObjectSetInteger(0, "SlowEMALabel", OBJPROP_YDISTANCE, 80);
-    ObjectSetString(0, "SlowEMALabel", OBJPROP_TEXT, "Slow EMA Period");
-    ObjectSetInteger(0, "SlowEMALabel", OBJPROP_COLOR, clrWhite);
-
-    // Risk Percent Input
-    ObjectCreate(0, "RiskInput", OBJ_EDIT, 0, 0, 0);
-    ObjectSetInteger(0, "RiskInput", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "RiskInput", OBJPROP_XDISTANCE, 20);
-    ObjectSetInteger(0, "RiskInput", OBJPROP_YDISTANCE, 110);
-    ObjectSetString(0, "RiskInput", OBJPROP_TEXT, DoubleToString(RiskPercent, 1));
-
-    ObjectCreate(0, "RiskLabel", OBJ_LABEL, 0, 0, 0);
-    ObjectSetInteger(0, "RiskLabel", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "RiskLabel", OBJPROP_XDISTANCE, 140);
-    ObjectSetInteger(0, "RiskLabel", OBJPROP_YDISTANCE, 110);
-    ObjectSetString(0, "RiskLabel", OBJPROP_TEXT, "Risk Percent");
-    ObjectSetInteger(0, "RiskLabel", OBJPROP_COLOR, clrWhite);
-
-    // Start/Stop Button
-    ObjectCreate(0, "StartStopButton", OBJ_BUTTON, 0, 0, 0);
-    ObjectSetInteger(0, "StartStopButton", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "StartStopButton", OBJPROP_XDISTANCE, 20);
-    ObjectSetInteger(0, "StartStopButton", OBJPROP_YDISTANCE, 140);
-    ObjectSetString(0, "StartStopButton", OBJPROP_TEXT, "Start Bot");
-    ObjectSetInteger(0, "StartStopButton", OBJPROP_WIDTH, 100);
-    ObjectSetInteger(0, "StartStopButton", OBJPROP_HEIGHT, 20);
-
-    // Close All Trades Button
-    ObjectCreate(0, "CloseAllButton", OBJ_BUTTON, 0, 0, 0);
-    ObjectSetInteger(0, "CloseAllButton", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "CloseAllButton", OBJPROP_XDISTANCE, 140);
-    ObjectSetInteger(0, "CloseAllButton", OBJPROP_YDISTANCE, 140);
-    ObjectSetString(0, "CloseAllButton", OBJPROP_TEXT, "Close All Trades");
-    ObjectSetInteger(0, "CloseAllButton", OBJPROP_WIDTH, 150);
-    ObjectSetInteger(0, "CloseAllButton", OBJPROP_HEIGHT, 20);
-
-    // Create Log Panel
-    logPanel = ObjectCreate(0, "LogPanel", OBJ_RECTANGLE_LABEL, 0, 0, 0);
-    ObjectSetInteger(0, "LogPanel", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "LogPanel", OBJPROP_XDISTANCE, 10);
-    ObjectSetInteger(0, "LogPanel", OBJPROP_YDISTANCE, 180);
-    ObjectSetInteger(0, "LogPanel", OBJPROP_COLOR, clrBlack);
-    ObjectSetInteger(0, "LogPanel", OBJPROP_WIDTH, 350);
-    ObjectSetInteger(0, "LogPanel", OBJPROP_HEIGHT, 100);
-
-    // Log Label
-    ObjectCreate(0, "LogLabel", OBJ_LABEL, 0, 0, 0);
-    ObjectSetInteger(0, "LogLabel", OBJPROP_CORNER, 0);
-    ObjectSetInteger(0, "LogLabel", OBJPROP_XDISTANCE, 20);
-    ObjectSetInteger(0, "LogLabel", OBJPROP_YDISTANCE, 200);
-    ObjectSetString(0, "LogLabel", OBJPROP_TEXT, "Log:\n");
-    ObjectSetInteger(0, "LogLabel", OBJPROP_COLOR, clrWhite);
+   // Create Status Label
+   ObjectCreate("StatusLabel", OBJ_LABEL, 0, 0, 0);
+   ObjectSet("StatusLabel", OBJPROP_CORNER, 0);
+   ObjectSet("StatusLabel", OBJPROP_XDISTANCE, 10);
+   ObjectSet("StatusLabel", OBJPROP_YDISTANCE, 40);
+   ObjectSetText("StatusLabel", "Bot Status: Stopped", 10, "Arial", clrWhite);
 }
 
-//--- Update bot status
-void UpdateStatus(string status) {
-    ObjectSetString(0, "StatusLabel", OBJPROP_TEXT, "Bot Status: " + status);
+//+------------------------------------------------------------------+
+//| Chart event function                                             |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+{
+   if (id == CHARTEVENT_OBJECT_CLICK && sparam == "StartStopButton")
+   {
+      isBotRunning = !isBotRunning;
+      ObjectSetText("StartStopButton", isBotRunning ? "Stop Bot" : "Start Bot", 10, "Arial", clrBlack);
+      ObjectSetText("StatusLabel", "Bot Status: " + (isBotRunning ? "Running" : "Stopped"), 10, "Arial", clrWhite);
+
+      Print("Bot " + (isBotRunning ? "started" : "stopped") + ".");
+   }
 }
 
-//--- Add log entry
-void AddLogEntry(string message) {
-    string currentLog = ObjectGetString(0, "LogLabel", OBJPROP_TEXT);
-    string updatedLog = currentLog + "\n" + TimeToString(TimeCurrent(), TIME_SECONDS) + ": " + message;
-    ObjectSetString(0, "LogLabel", OBJPROP_TEXT, updatedLog);
-}
-
-//--- Close all trades
-void CloseAllTrades() {
-    for (int i = 0; i < OrdersTotal(); i++) {
-        if (OrderSelect(i, SELECT_BY_POS) && OrderSymbol() == Symbol()) {
-            OrderClose(OrderTicket(), OrderLots(), OrderClosePrice(), 3, clrRed);
-        }
-    }
-    AddLogEntry("All trades closed.");
-}
-
-//--- Handle button clicks
-void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam) {
-    if (id == CHARTEVENT_OBJECT_CLICK) {
-        if (sparam == "StartStopButton") {
-            static bool isBotRunning = false;
-            isBotRunning = !isBotRunning;
-
-            if (isBotRunning) {
-                UpdateStatus("Running");
-                ObjectSetString(0, "StartStopButton", OBJPROP_TEXT, "Stop Bot");
-                AddLogEntry("Bot started.");
-            } else {
-                UpdateStatus("Stopped");
-                ObjectSetString(0, "StartStopButton", OBJPROP_TEXT, "Start Bot");
-                AddLogEntry("Bot stopped.");
-            }
-        } else if (sparam == "CloseAllButton") {
-            CloseAllTrades();
-        }
-    }
-}
-
-//--- Main initialization
-int OnInit() {
-    InitializeUI();
-    AddLogEntry("UI Initialized.");
-    return(INIT_SUCCEEDED);
-}
-
-//--- Main deinitialization
-void OnDeinit(const int reason) {
-    ObjectDelete(0, "MainPanel");
-    ObjectDelete(0, "StatusLabel");
-    ObjectDelete(0, "StartStopButton");
-    ObjectDelete(0, "CloseAllButton");
-    ObjectDelete(0, "FastEMAInput");
-    ObjectDelete(0, "SlowEMAInput");
-    ObjectDelete(0, "RiskInput");
-    ObjectDelete(0, "FastEMALabel");
-    ObjectDelete(0, "SlowEMALabel");
-    ObjectDelete(0, "RiskLabel");
-    ObjectDelete(0, "LogPanel");
-    ObjectDelete(0, "LogLabel");
-}
