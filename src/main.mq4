@@ -1,18 +1,53 @@
-// Main MQL4 file for the trading bot.
-// 13/50 EMA Crossover with Risk Management EA
-// This EA trades based on a 13/50 EMA crossover, with risk management implemented
+//--- File names for logging and journaling
+string logFileName = "TradingBot_Log.csv";
+string journalFileName = "TradingJournal.csv";
+
+//--- Helper function to write to a file
+void WriteToFile(string fileName, string content) {
+    int fileHandle = FileOpen(fileName, FILE_CSV | FILE_WRITE | FILE_READ, ";");
+    if (fileHandle < 0) {
+        Print("Error opening file: ", fileName);
+        return;
+    }
+    FileSeek(fileHandle, 0, SEEK_END);
+    FileWrite(fileHandle, content);
+    FileClose(fileHandle);
+}
+
+//--- Initialize log and journal files
+void InitializeLogging() {
+    WriteToFile(logFileName, "Timestamp;Event");
+    WriteToFile(journalFileName, "Timestamp;Symbol;OrderType;Lots;EntryPrice;ExitPrice;Profit;TradeDuration");
+}
+
+//--- Function to log bot activity
+void LogEvent(string eventMessage) {
+    string logEntry = TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES) + ";" + eventMessage;
+    WriteToFile(logFileName, logEntry);
+}
+
+//--- Function to log trade details
+void LogTrade(string symbol, int orderType, double lots, double entryPrice, double exitPrice, double profit, double duration) {
+    string tradeEntry = TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES) + ";" +
+                        symbol + ";" +
+                        (orderType == OP_BUY ? "BUY" : "SELL") + ";" +
+                        DoubleToString(lots, 2) + ";" +
+                        DoubleToString(entryPrice, 5) + ";" +
+                        DoubleToString(exitPrice, 5) + ";" +
+                        DoubleToString(profit, 2) + ";" +
+                        DoubleToString(duration, 2);
+    WriteToFile(journalFileName, tradeEntry);
+}
 
 //--- Input parameters for crossover strategy
 input int FastMAPeriod = 13;       // Fast EMA (13 period)
 input int SlowMAPeriod = 50;       // Slow EMA (50 period)
-
-//--- Risk management parameters
-input double RiskPercent = 1.0;       // Risk 1% of account balance
-input int RewardToRiskRatio = 2;      // TP is 2 times SL
-input int MaxTradeDurationHours = 2;  // Maximum duration in hours before closing the trade if negative
-input double Lots = 0.1;              // Fixed lot size (used if risk-based lot calculation fails)
-input int Slippage = 3;               // Slippage in points
-input int StopLossPipsBuffer = 5;     // 5 pips buffer for SL above/below entry candle
+input double RiskPercent = 1.0;   // Risk 1% of account balance
+input int RewardToRiskRatio = 2;  // TP is 2 times SL
+input int MaxTradeDurationHours = 2; // Max duration in hours before closing the trade if negative
+input double Lots = 0.1;          // Fixed lot size
+input int Slippage = 3;           // Slippage in points
+input int StopLossPipsBuffer = 5; // 5 pips buffer for SL above/below entry candle
 
 //--- Global variables
 double StopLossLevel, TakeProfitLevel;
@@ -28,7 +63,9 @@ double GetEMA(int period, int shift) {
 
 //--- Initialization function
 int OnInit() {
-    Print("13/50 EMA Crossover with Risk Management EA initialized.");
+    Print("Initializing trading bot...");
+    InitializeLogging();
+    LogEvent("Bot initialized successfully");
     return(INIT_SUCCEEDED);
 }
 
@@ -54,71 +91,49 @@ void OnTick() {
     } else {
         // Open a new trade if conditions are met
         if (BullishCross && ValidPullback && Close[1] < FastMA && Close[0] > FastMA) {
+            LogEvent("Bullish EMA crossover detected");
             PlaceTrade(OP_BUY);
-        } 
-        else if (BearishCross && ValidPullback && Close[1] > FastMA && Close[0] < FastMA) {
+        } else if (BearishCross && ValidPullback && Close[1] > FastMA && Close[0] < FastMA) {
+            LogEvent("Bearish EMA crossover detected");
             PlaceTrade(OP_SELL);
         }
     }
 }
 
-//--- Function to place a trade with 1% risk management and 5 pips buffer on SL
+//--- Function to place a trade
 void PlaceTrade(int orderType) {
-    double accountBalance = AccountBalance();
-    double riskAmount = (RiskPercent / 100.0) * accountBalance;
+    double entryPrice = (orderType == OP_BUY) ? Ask : Bid;
+    double stopLoss = (orderType == OP_BUY) ? entryPrice - (StopLossPipsBuffer * Point) : entryPrice + (StopLossPipsBuffer * Point);
+    double takeProfit = (orderType == OP_BUY) ? entryPrice + RewardToRiskRatio * (entryPrice - stopLoss) : entryPrice - RewardToRiskRatio * (stopLoss - entryPrice);
+    double lots = Lots;
 
-    double price, slPrice, tpPrice;
-    double entryCandleHigh = High[1];  // High of the entry candle (previous candle)
-    double entryCandleLow = Low[1];    // Low of the entry candle (previous candle)
-
-    // Calculate SL and TP based on the high/low of the entry candle and a 5-pip buffer
-    if (orderType == OP_BUY) {
-        price = Ask;
-        StopLossLevel = entryCandleLow - (StopLossPipsBuffer * Point); // 5 pips below the low of the entry candle
-        TakeProfitLevel = price + RewardToRiskRatio * (price - StopLossLevel); // TP at reward-to-risk ratio
-    } else if (orderType == OP_SELL) {
-        price = Bid;
-        StopLossLevel = entryCandleHigh + (StopLossPipsBuffer * Point); // 5 pips above the high of the entry candle
-        TakeProfitLevel = price - RewardToRiskRatio * (StopLossLevel - price); // TP at reward-to-risk ratio
-    }
-
-    // Calculate position size based on risk
-    double lotSize = Lots; // Default lot size
-    if (StopLossLevel > 0 && riskAmount > 0) {
-        double pipRisk = MathAbs(price - StopLossLevel) / Point;
-        lotSize = riskAmount / (pipRisk * MarketInfo(Symbol(), MODE_TICKVALUE));
-        lotSize = MathMax(lotSize, MarketInfo(Symbol(), MODE_MINLOT)); // Ensure minimum lot size
-    }
-
-    // Place the order
-    TradeTicket = OrderSend(Symbol(), orderType, lotSize, price, Slippage, StopLossLevel, TakeProfitLevel, "Risk Managed Trade", 0, 0, clrGreen);
-
+    // Execute trade
+    TradeTicket = OrderSend(Symbol(), orderType, lots, entryPrice, Slippage, stopLoss, takeProfit, "Trade with Risk Management", 0, 0, clrGreen);
     if (TradeTicket > 0) {
-        TradeOpenTime = TimeCurrent(); // Record the trade open time
-        StopMovedToBreakEven = false;  // Reset break-even flag
-        Print("Trade placed successfully. Ticket #: ", TradeTicket);
+        LogEvent("Trade placed successfully. Ticket #: " + IntegerToString(TradeTicket));
+        TradeOpenTime = TimeCurrent();
+        StopMovedToBreakEven = false;
     } else {
-        Print("Error placing trade. Error: ", GetLastError());
+        LogEvent("Error placing trade. Error code: " + IntegerToString(GetLastError()));
     }
 }
 
-//--- Function to manage the open trade
+//--- Function to manage open trades
 void ManageOpenTrade() {
     for (int i = 0; i < OrdersTotal(); i++) {
-        if (OrderSelect(i, SELECT_BY_POS) && OrderMagicNumber() == 0 && OrderSymbol() == Symbol()) {
-            double currentPrice = (OrderType() == OP_BUY) ? Bid : Ask;
+        if (OrderSelect(i, SELECT_BY_POS) && OrderSymbol() == Symbol()) {
             double profit = OrderProfit();
+            double duration = (TimeCurrent() - OrderOpenTime) / 3600.0;
 
-            // Check if the trade has been open for more than the defined maximum duration
-            if ((TimeCurrent() - OrderOpenTime) >= (MaxTradeDurationHours * 3600)) {
-                if (profit < 0) {
-                    // Close the trade if it's negative after 2 hours
-                    CloseTrade(OrderTicket());
-                } else if (profit > 0 && !StopMovedToBreakEven) {
-                    // Move stop loss to break even if trade is positive after 2 hours
-                    MoveStopToBreakEven(OrderTicket(), OrderType());
-                    StopMovedToBreakEven = true;
-                }
+            if (profit > 0 && !StopMovedToBreakEven) {
+                LogEvent("Moving stop loss to break even");
+                MoveStopToBreakEven(OrderTicket(), OrderType());
+                StopMovedToBreakEven = true;
+            }
+
+            if (duration >= MaxTradeDurationHours) {
+                LogEvent("Trade duration exceeded maximum allowed time");
+                CloseTrade(OrderTicket());
             }
         }
     }
@@ -128,26 +143,30 @@ void ManageOpenTrade() {
 void CloseTrade(int ticket) {
     if (OrderSelect(ticket, SELECT_BY_TICKET)) {
         double closePrice = (OrderType() == OP_BUY) ? Bid : Ask;
+        double profit = OrderProfit();
+        double duration = (TimeCurrent() - OrderOpenTime) / 3600.0;
         bool result = OrderClose(ticket, OrderLots(), closePrice, Slippage, clrRed);
 
         if (result) {
-            Print("Trade closed successfully. Ticket #: ", ticket);
+            LogEvent("Trade closed successfully. Ticket #: " + IntegerToString(ticket));
+            LogTrade(Symbol(), OrderType(), OrderLots(), OrderOpenPrice(), closePrice, profit, duration);
         } else {
-            Print("Error closing trade. Error: ", GetLastError());
+            LogEvent("Error closing trade. Error code: " + IntegerToString(GetLastError()));
         }
     }
 }
 
-//--- Function to move SL to break even
+//--- Function to move stop loss to break even
 void MoveStopToBreakEven(int ticket, int orderType) {
     if (OrderSelect(ticket, SELECT_BY_TICKET)) {
-        double newSL = OrderOpenPrice();
-        bool result = OrderModify(ticket, OrderOpenPrice(), newSL, OrderTakeProfit(), 0, clrBlue);
+        double newStopLoss = OrderOpenPrice();
+        bool result = OrderModify(ticket, OrderOpenPrice(), newStopLoss, OrderTakeProfit(), 0, clrBlue);
 
         if (result) {
-            Print("Stop loss moved to break even.");
+            LogEvent("Stop loss moved to break even successfully");
         } else {
-            Print("Error modifying stop loss. Error: ", GetLastError());
+            LogEvent("Error moving stop loss. Error code: " + IntegerToString(GetLastError()));
         }
     }
 }
+
