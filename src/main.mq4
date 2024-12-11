@@ -1,172 +1,221 @@
-//--- File names for logging and journaling
-string logFileName = "TradingBot_Log.csv";
-string journalFileName = "TradingJournal.csv";
+//+------------------------------------------------------------------+
+//|                                                 AUTOTRADEBOT.mq4 |
+//|                                                                  |
+//|                                                                  |
+//+------------------------------------------------------------------+
 
-//--- Helper function to write to a file
-void WriteToFile(string fileName, string content) {
-    int fileHandle = FileOpen(fileName, FILE_CSV | FILE_WRITE | FILE_READ, ";");
-    if (fileHandle < 0) {
-        Print("Error opening file: ", fileName);
-        return;
-    }
-    FileSeek(fileHandle, 0, SEEK_END);
-    FileWrite(fileHandle, content);
-    FileClose(fileHandle);
-}
 
-//--- Initialize log and journal files
-void InitializeLogging() {
-    WriteToFile(logFileName, "Timestamp;Event");
-    WriteToFile(journalFileName, "Timestamp;Symbol;OrderType;Lots;EntryPrice;ExitPrice;Profit;TradeDuration");
-}
-
-//--- Function to log bot activity
-void LogEvent(string eventMessage) {
-    string logEntry = TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES) + ";" + eventMessage;
-    WriteToFile(logFileName, logEntry);
-}
-
-//--- Function to log trade details
-void LogTrade(string symbol, int orderType, double lots, double entryPrice, double exitPrice, double profit, double duration) {
-    string tradeEntry = TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES) + ";" +
-                        symbol + ";" +
-                        (orderType == OP_BUY ? "BUY" : "SELL") + ";" +
-                        DoubleToString(lots, 2) + ";" +
-                        DoubleToString(entryPrice, 5) + ";" +
-                        DoubleToString(exitPrice, 5) + ";" +
-                        DoubleToString(profit, 2) + ";" +
-                        DoubleToString(duration, 2);
-    WriteToFile(journalFileName, tradeEntry);
-}
-
-//--- Input parameters for crossover strategy
-input int FastMAPeriod = 13;       // Fast EMA (13 period)
-input int SlowMAPeriod = 50;       // Slow EMA (50 period)
-input double RiskPercent = 1.0;   // Risk 1% of account balance
-input int RewardToRiskRatio = 2;  // TP is 2 times SL
-input int MaxTradeDurationHours = 2; // Max duration in hours before closing the trade if negative
-input double Lots = 0.1;          // Fixed lot size
-input int Slippage = 3;           // Slippage in points
-input int StopLossPipsBuffer = 5; // 5 pips buffer for SL above/below entry candle
+//--- Input parameters
+input int      FastMAPeriod      = 13;      // Fast EMA period
+input int      SlowMAPeriod      = 50;      // Slow EMA period
+input double   RiskPercent       = 1.0;     // Risk % of account balance
+input int      RewardToRiskRatio = 2;       // TP/SL ratio
+input int      MaxTradeDuration  = 2;       // Max duration in hours
+input int      StopLossPipsBuffer = 5;      // Stop loss buffer in pips
+input int      Slippage          = 3;       // Slippage in pips
+input int      MagicNumber       = 12345;   // Magic number for trades
+input bool     LogEnabled        = true;    // Enable/disable logging
 
 //--- Global variables
+bool isBotRunning = false;                  // Start/Stop status
+double fastMA, slowMA, prevFastMA, prevSlowMA;  // EMA values
 double StopLossLevel, TakeProfitLevel;
 datetime TradeOpenTime;
 int TradeTicket;
 bool StopMovedToBreakEven = false;
-double FastMA, SlowMA;
 
-//--- Function to calculate EMA values
-double GetEMA(int period, int shift) {
-    return iMA(NULL, 0, period, 0, MODE_EMA, PRICE_CLOSE, shift);
+//--- UI element names
+string StartStopButton = "StartStopButton";
+string StatusLabel     = "StatusLabel";
+string LogLabel        = "LogLabel";
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   InitializeUI();
+   Log("AUTOTRADEBOT with Risk Management initialized.");
+   return(INIT_SUCCEEDED);
 }
-
-//--- Initialization function
-int OnInit() {
-    Print("Initializing trading bot...");
-    InitializeLogging();
-    LogEvent("Bot initialized successfully");
-    return(INIT_SUCCEEDED);
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   ObjectDelete(StartStopButton);
+   ObjectDelete(StatusLabel);
+   ObjectDelete(LogLabel);
+   Log("AUTOTRADEBOT deinitialized.");
 }
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   if (!isBotRunning) return;
 
-//--- Main function
-void OnTick() {
-    // Calculate the current and previous values of the 13 EMA and 50 EMA
-    FastMA = GetEMA(FastMAPeriod, 0);       // Current 13 EMA
-    double PreviousFastMA = GetEMA(FastMAPeriod, 1); // Previous 13 EMA
-    SlowMA = GetEMA(SlowMAPeriod, 0);       // Current 50 EMA
-    double PreviousSlowMA = GetEMA(SlowMAPeriod, 1); // Previous 50 EMA
+   // Calculate EMAs
+   fastMA     = iMA(NULL, 0, FastMAPeriod, 0, MODE_EMA, PRICE_CLOSE, 0);
+   slowMA     = iMA(NULL, 0, SlowMAPeriod, 0, MODE_EMA, PRICE_CLOSE, 0);
+   prevFastMA = iMA(NULL, 0, FastMAPeriod, 0, MODE_EMA, PRICE_CLOSE, 1);
+   prevSlowMA = iMA(NULL, 0, SlowMAPeriod, 0, MODE_EMA, PRICE_CLOSE, 1);
 
-    // Check for EMA crossover
-    bool BullishCross = (PreviousFastMA < PreviousSlowMA && FastMA > SlowMA);
-    bool BearishCross = (PreviousFastMA > PreviousSlowMA && FastMA < SlowMA);
+   // Check for crossover signals
+   if (prevFastMA < prevSlowMA && fastMA > slowMA) // Bullish crossover
+   {
+      Log("Bullish crossover detected. Placing BUY order.");
+      PlaceTrade(OP_BUY);
+   }
+   else if (prevFastMA > prevSlowMA && fastMA < slowMA) // Bearish crossover
+   {
+      Log("Bearish crossover detected. Placing SELL order.");
+      PlaceTrade(OP_SELL);
+   }
 
-    // Check for pullback criteria (price within 25-50 pips of 50 EMA)
-    double priceDistance = MathAbs(Close[0] - SlowMA) / Point;
-    bool ValidPullback = (priceDistance >= 25 && priceDistance <= 50);
-
-    // Check if there's an open position
-    if (OrdersTotal() > 0) {
-        ManageOpenTrade();
-    } else {
-        // Open a new trade if conditions are met
-        if (BullishCross && ValidPullback && Close[1] < FastMA && Close[0] > FastMA) {
-            LogEvent("Bullish EMA crossover detected");
-            PlaceTrade(OP_BUY);
-        } else if (BearishCross && ValidPullback && Close[1] > FastMA && Close[0] < FastMA) {
-            LogEvent("Bearish EMA crossover detected");
-            PlaceTrade(OP_SELL);
-        }
-    }
+   // Manage any open trades
+   ManageOpenTrade();
 }
+//+------------------------------------------------------------------+
+//| Trade placement function                                         |
+//+------------------------------------------------------------------+
+void PlaceTrade(int orderType)
+{
+   double accountBalance = AccountBalance();
+   double riskAmount = (RiskPercent / 100.0) * accountBalance;
 
-//--- Function to place a trade
-void PlaceTrade(int orderType) {
-    double entryPrice = (orderType == OP_BUY) ? Ask : Bid;
-    double stopLoss = (orderType == OP_BUY) ? entryPrice - (StopLossPipsBuffer * Point) : entryPrice + (StopLossPipsBuffer * Point);
-    double takeProfit = (orderType == OP_BUY) ? entryPrice + RewardToRiskRatio * (entryPrice - stopLoss) : entryPrice - RewardToRiskRatio * (stopLoss - entryPrice);
-    double lots = Lots;
+   double price, slPrice, tpPrice;
+   double entryCandleHigh = High[1];  // High of the previous candle
+   double entryCandleLow = Low[1];   // Low of the previous candle
+   double lotSize;
 
-    // Execute trade
-    TradeTicket = OrderSend(Symbol(), orderType, lots, entryPrice, Slippage, stopLoss, takeProfit, "Trade with Risk Management", 0, 0, clrGreen);
-    if (TradeTicket > 0) {
-        LogEvent("Trade placed successfully. Ticket #: " + IntegerToString(TradeTicket));
-        TradeOpenTime = TimeCurrent();
-        StopMovedToBreakEven = false;
-    } else {
-        LogEvent("Error placing trade. Error code: " + IntegerToString(GetLastError()));
-    }
+   // Calculate SL and TP based on the high/low of the entry candle and a buffer
+   if (orderType == OP_BUY)
+   {
+      price = Ask;
+      StopLossLevel = entryCandleLow - (StopLossPipsBuffer * Point);
+      TakeProfitLevel = price + RewardToRiskRatio * (price - StopLossLevel);
+   }
+   else if (orderType == OP_SELL)
+   {
+      price = Bid;
+      StopLossLevel = entryCandleHigh + (StopLossPipsBuffer * Point);
+      TakeProfitLevel = price - RewardToRiskRatio * (StopLossLevel - price);
+   }
+
+   // Calculate lot size based on risk amount
+   lotSize = riskAmount / MathAbs(price - StopLossLevel);
+
+   // Normalize values
+   StopLossLevel = NormalizeDouble(StopLossLevel, Digits);
+   TakeProfitLevel = NormalizeDouble(TakeProfitLevel, Digits);
+   lotSize = NormalizeDouble(lotSize, 2);
+
+   // Place the order
+   TradeTicket = OrderSend(Symbol(), orderType, lotSize, price, Slippage, StopLossLevel, TakeProfitLevel, "EMA Crossover Trade", MagicNumber, 0, clrBlue);
+
+   if (TradeTicket > 0)
+   {
+      TradeOpenTime = TimeCurrent(); // Record the trade open time
+      StopMovedToBreakEven = false;
+      Log("Trade placed successfully. Ticket: " + IntegerToString(TradeTicket));
+   }
+   else
+   {
+      Log("Error placing trade. Error: " + IntegerToString(GetLastError()));
+   }
 }
-
-//--- Function to manage open trades
-void ManageOpenTrade() {
-    for (int i = 0; i < OrdersTotal(); i++) {
-        if (OrderSelect(i, SELECT_BY_POS) && OrderSymbol() == Symbol()) {
-            double profit = OrderProfit();
-            double duration = (TimeCurrent() - OrderOpenTime) / 3600.0;
-
-            if (profit > 0 && !StopMovedToBreakEven) {
-                LogEvent("Moving stop loss to break even");
-                MoveStopToBreakEven(OrderTicket(), OrderType());
-                StopMovedToBreakEven = true;
+//+------------------------------------------------------------------+
+//| Manage open trade                                                |
+//+------------------------------------------------------------------+
+void ManageOpenTrade()
+{
+   for (int i = 0; i < OrdersTotal(); i++)
+   {
+      if (OrderSelect(i, SELECT_BY_POS) && OrderMagicNumber() == MagicNumber)
+      {
+         double profit = OrderProfit();
+         datetime openTime = OrderOpenTime();
+         // Check if the trade has exceeded the maximum duration
+         if ((TimeCurrent() - openTime) >= (MaxTradeDuration * 3600))
+         {
+            if (profit < 0)
+            {
+               Log("Trade negative beyond max duration. Closing trade.");
+               CloseTrade(OrderTicket());
             }
-
-            if (duration >= MaxTradeDurationHours) {
-                LogEvent("Trade duration exceeded maximum allowed time");
-                CloseTrade(OrderTicket());
+            else if (!StopMovedToBreakEven)
+            {
+               Log("Moving SL to break even.");
+               MoveStopToBreakEven(OrderTicket());
+               StopMovedToBreakEven = true;
             }
-        }
-    }
+         }
+      }
+   }
 }
 
-//--- Function to close a trade
-void CloseTrade(int ticket) {
-    if (OrderSelect(ticket, SELECT_BY_TICKET)) {
-        double closePrice = (OrderType() == OP_BUY) ? Bid : Ask;
-        double profit = OrderProfit();
-        double duration = (TimeCurrent() - OrderOpenTime) / 3600.0;
-        bool result = OrderClose(ticket, OrderLots(), closePrice, Slippage, clrRed);
-
-        if (result) {
-            LogEvent("Trade closed successfully. Ticket #: " + IntegerToString(ticket));
-            LogTrade(Symbol(), OrderType(), OrderLots(), OrderOpenPrice(), closePrice, profit, duration);
-        } else {
-            LogEvent("Error closing trade. Error code: " + IntegerToString(GetLastError()));
-        }
-    }
+//+------------------------------------------------------------------+
+//| Close trade                                                      |
+//+------------------------------------------------------------------+
+void CloseTrade(int ticket)
+{
+   if (OrderSelect(ticket, SELECT_BY_TICKET))
+   {
+      double closePrice = (OrderType() == OP_BUY) ? Bid : Ask;
+      if (OrderClose(ticket, OrderLots(), closePrice, Slippage, clrRed))
+         Log("Trade closed successfully. Ticket: " + IntegerToString(ticket));
+      else
+         Log("Error closing trade. Error: " + IntegerToString(GetLastError()));
+   }
 }
-
-//--- Function to move stop loss to break even
-void MoveStopToBreakEven(int ticket, int orderType) {
-    if (OrderSelect(ticket, SELECT_BY_TICKET)) {
-        double newStopLoss = OrderOpenPrice();
-        bool result = OrderModify(ticket, OrderOpenPrice(), newStopLoss, OrderTakeProfit(), 0, clrBlue);
-
-        if (result) {
-            LogEvent("Stop loss moved to break even successfully");
-        } else {
-            LogEvent("Error moving stop loss. Error code: " + IntegerToString(GetLastError()));
-        }
-    }
+//+------------------------------------------------------------------+
+//| Move stop loss to break even                                     |
+//+------------------------------------------------------------------+
+void MoveStopToBreakEven(int ticket)
+{
+   if (OrderSelect(ticket, SELECT_BY_TICKET))
+   {
+      double newSL = OrderOpenPrice();
+      if (OrderModify(ticket, OrderOpenPrice(), newSL, OrderTakeProfit(), 0, clrBlue))
+         Log("Stop loss moved to break even.");
+      else
+         Log("Error modifying stop loss. Error: " + IntegerToString(GetLastError()));
+   }
 }
+//+------------------------------------------------------------------+
+//| UI Initialization                                                |
+//+------------------------------------------------------------------+
+void InitializeUI()
+{
+   ObjectCreate(StartStopButton, OBJ_BUTTON, 0, 0, 0);
+   ObjectSet(StartStopButton, OBJPROP_CORNER, 0);
+   ObjectSet(StartStopButton, OBJPROP_XDISTANCE, 10);
+   ObjectSet(StartStopButton, OBJPROP_YDISTANCE, 10);
+   ObjectSetText(StartStopButton, "Start Bot", 10, "Arial", clrBlack);
 
+   ObjectCreate(StatusLabel, OBJ_LABEL, 0, 0, 0);
+   ObjectSet(StatusLabel, OBJPROP_CORNER, 0);
+   ObjectSet(StatusLabel, OBJPROP_XDISTANCE, 10);
+   ObjectSet(StatusLabel, OBJPROP_YDISTANCE, 40);
+   ObjectSetText(StatusLabel, "Bot Status: Stopped", 10, "Arial", clrWhite);
+
+   ObjectCreate(LogLabel, OBJ_LABEL, 0, 0, 0);
+   ObjectSet(LogLabel, OBJPROP_CORNER, 0);
+   ObjectSet(LogLabel, OBJPROP_XDISTANCE, 10);
+   ObjectSet(LogLabel, OBJPROP_YDISTANCE, 70);
+   ObjectSetText(LogLabel, "Logs:\n", 10, "Arial", clrWhite);
+}
+//+------------------------------------------------------------------+
+//| Logging                                                          |
+//+------------------------------------------------------------------+
+void Log(string message)
+{
+   if (LogEnabled)
+   {
+      Print(message);
+      string currentLog = ObjectDescription(LogLabel);
+      ObjectSetText(LogLabel, currentLog + "\n" + message, 10, "Arial", clrWhite);
+   }
+}
+//+------------------------------------------------------------------+
